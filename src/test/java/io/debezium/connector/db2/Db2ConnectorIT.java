@@ -178,9 +178,10 @@ public class Db2ConnectorIT extends AbstractAsyncEngineConnectorTest {
         TestHelper.refreshAndWait(connection);
 
         connection.setAutoCommit(false);
-
+        consumeRecordsByTopic(1); // Bypass the snapshot R Record
         connection.execute(
-                "UPDATE tablea SET id=100 WHERE id=1");
+                "UPDATE tablea SET cola='b' WHERE id=1");
+        connection.commit();
 
         TestHelper.refreshAndWait(connection);
 
@@ -188,13 +189,14 @@ public class Db2ConnectorIT extends AbstractAsyncEngineConnectorTest {
         final List<SourceRecord> tableA = records.recordsForTopic("testdb.DB2INST1.TABLEA");
         assertThat(tableA).hasSize(1);
 
-        final List<SchemaAndValueField> expectedUpdateRowA = Arrays.asList(
-                new SchemaAndValueField("ID", Schema.INT32_SCHEMA, 100),
-                new SchemaAndValueField("COLA", Schema.OPTIONAL_STRING_SCHEMA, "a"));
         final List<SchemaAndValueField> expectedUpdateKeyA = Arrays.asList(
-                new SchemaAndValueField("ID", Schema.INT32_SCHEMA, 100));
+                new SchemaAndValueField("ID", Schema.INT32_SCHEMA, 1));
+        final List<SchemaAndValueField> expectedUpdateRowA = Arrays.asList(
+                new SchemaAndValueField("ID", Schema.INT32_SCHEMA, 1),
+                new SchemaAndValueField("COLA", Schema.OPTIONAL_STRING_SCHEMA, "b"));
 
         final SourceRecord updateRecordA = tableA.get(0);
+        logger.info("updateAsSingleCDCURecord - Update Record: {}", updateRecordA);
 
         final Struct updateKeyA = (Struct) updateRecordA.key();
         final Struct updateValueA = (Struct) updateRecordA.value();
@@ -221,9 +223,10 @@ public class Db2ConnectorIT extends AbstractAsyncEngineConnectorTest {
         TestHelper.refreshAndWait(connection);
 
         connection.setAutoCommit(false);
-
+        consumeRecordsByTopic(1); // Bypass the snapshot R Record
         connection.execute(
-                "UPDATE tablea SET id=100 WHERE id=1");
+                "UPDATE tablea SET cola='b' WHERE id=1");
+        connection.commit();
 
         TestHelper.refreshAndWait(connection);
 
@@ -231,20 +234,29 @@ public class Db2ConnectorIT extends AbstractAsyncEngineConnectorTest {
         final List<SourceRecord> tableA = records.recordsForTopic("testdb.DB2INST1.TABLEA");
         assertThat(tableA).hasSize(1);
 
-        final List<SchemaAndValueField> expectedUpdateRowA = Arrays.asList(
-                new SchemaAndValueField("ID", Schema.INT32_SCHEMA, 100),
-                new SchemaAndValueField("COLA", Schema.OPTIONAL_STRING_SCHEMA, "a"));
         final List<SchemaAndValueField> expectedUpdateKeyA = Arrays.asList(
-                new SchemaAndValueField("ID", Schema.INT32_SCHEMA, 100));
+                new SchemaAndValueField("ID", Schema.INT32_SCHEMA, 1));
+
+        final List<SchemaAndValueField> expectedBeforeUpdateRowA = Arrays.asList(
+                new SchemaAndValueField("ID", Schema.INT32_SCHEMA, 1),
+                new SchemaAndValueField("COLA", Schema.OPTIONAL_STRING_SCHEMA, "a"));
+
+        final List<SchemaAndValueField> expectedUpdateRowA = Arrays.asList(
+                new SchemaAndValueField("ID", Schema.INT32_SCHEMA, 1),
+                new SchemaAndValueField("COLA", Schema.OPTIONAL_STRING_SCHEMA, "b"));
 
         final SourceRecord updateRecordA = tableA.get(0);
+        logger.info("updateAsDoubleCDCDIRecords - Update Record: {}", updateRecordA);
 
         final Struct updateKeyA = (Struct) updateRecordA.key();
         final Struct updateValueA = (Struct) updateRecordA.value();
+
+        assertRecord(updateKeyA, expectedUpdateKeyA);
+        assertRecord(updateValueA.getStruct("before"), expectedBeforeUpdateRowA);
         assertRecord(updateValueA.getStruct("after"), expectedUpdateRowA);
 
         assertEquals(updateValueA.getString("op"), "u");
-        assertRecord(updateKeyA, expectedUpdateKeyA);
+
         assertNotNull(updateValueA.get("before"));
         assertNotNull(updateValueA.get("after"));
 
