@@ -12,6 +12,8 @@ import static io.debezium.data.Envelope.FieldName.AFTER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.entry;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertEquals;
 
 import java.sql.SQLException;
 import java.util.Arrays;
@@ -171,7 +173,7 @@ public class Db2ConnectorIT extends AbstractAsyncEngineConnectorTest {
         assertConnectorIsRunning();
 
         TestHelper.enableDbCdc(connection);
-        connection.execute("UPDATE ASNCDC.IBMSNAP_REGISTER SET STATE = 'A', SET CHG_UPD_TO_DEL_INS = 'N' WHERE SOURCE_OWNER = 'DB2INST1'");
+        connection.execute("UPDATE ASNCDC.IBMSNAP_REGISTER SET STATE = 'A', CHG_UPD_TO_DEL_INS = 'N' WHERE SOURCE_OWNER = 'DB2INST1'");
 
         TestHelper.refreshAndWait(connection);
 
@@ -197,8 +199,54 @@ public class Db2ConnectorIT extends AbstractAsyncEngineConnectorTest {
         final Struct updateKeyA = (Struct) updateRecordA.key();
         final Struct updateValueA = (Struct) updateRecordA.value();
         assertRecord(updateValueA.getStruct("after"), expectedUpdateRowA);
+        assertEquals(updateValueA.getString("op"), "u");
         assertRecord(updateKeyA, expectedUpdateKeyA);
         assertNull(updateValueA.get("before"));
+
+        stopConnector();
+    }
+    @Test
+    public void updateAsDoubleCDCDIRecords() throws Exception {
+
+        final Configuration config = TestHelper.defaultConfig()
+                .with(Db2ConnectorConfig.SNAPSHOT_MODE, SnapshotMode.INITIAL)
+                .build();
+
+        start(Db2Connector.class, config);
+        assertConnectorIsRunning();
+
+        TestHelper.enableDbCdc(connection);
+        connection.execute("UPDATE ASNCDC.IBMSNAP_REGISTER SET STATE = 'A', CHG_UPD_TO_DEL_INS = 'Y' WHERE SOURCE_OWNER = 'DB2INST1'");
+
+        TestHelper.refreshAndWait(connection);
+
+        connection.setAutoCommit(false);
+
+        connection.execute(
+                "UPDATE tablea SET id=100 WHERE id=1");
+
+        TestHelper.refreshAndWait(connection);
+
+        final SourceRecords records = consumeRecordsByTopic(1);
+        final List<SourceRecord> tableA = records.recordsForTopic("testdb.DB2INST1.TABLEA");
+        assertThat(tableA).hasSize(1);
+
+        final List<SchemaAndValueField> expectedUpdateRowA = Arrays.asList(
+                new SchemaAndValueField("ID", Schema.INT32_SCHEMA, 100),
+                new SchemaAndValueField("COLA", Schema.OPTIONAL_STRING_SCHEMA, "a"));
+        final List<SchemaAndValueField> expectedUpdateKeyA = Arrays.asList(
+                new SchemaAndValueField("ID", Schema.INT32_SCHEMA, 100));
+
+        final SourceRecord updateRecordA = tableA.get(0);
+
+        final Struct updateKeyA = (Struct) updateRecordA.key();
+        final Struct updateValueA = (Struct) updateRecordA.value();
+        assertRecord(updateValueA.getStruct("after"), expectedUpdateRowA);
+
+        assertEquals(updateValueA.getString("op"), "u");
+        assertRecord(updateKeyA, expectedUpdateKeyA);
+        assertNotNull(updateValueA.get("before"));
+        assertNotNull(updateValueA.get("after"));
 
         stopConnector();
     }
