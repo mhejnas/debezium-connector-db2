@@ -18,6 +18,7 @@ public class ZOsPlatform implements Db2PlatformAdapter {
     private final String getAllChangesForTable;
     private final String getListOfCdcEnabledTables;
     private final String getListOfNewCdcEnabledTables;
+    private final String getAllChangesForTableWithUowLimit;
 
     public ZOsPlatform(Db2ConnectorConfig connectorConfig) {
 
@@ -28,6 +29,42 @@ public class ZOsPlatform implements Db2PlatformAdapter {
         this.getAllChangesForTable = "WITH tmp AS (SELECT cdc.IBMSNAP_OPERATION, cdc.IBMSNAP_COMMITSEQ, cdc.IBMSNAP_INTENTSEQ, " +
                 "ROW_NUMBER() OVER (PARTITION BY cdc.IBMSNAP_COMMITSEQ ORDER BY cdc.IBMSNAP_INTENTSEQ) rn FROM "
                 + connectorConfig.getCdcChangeTablesSchema() + ".# cdc WHERE  cdc.IBMSNAP_COMMITSEQ >= ? AND cdc.IBMSNAP_COMMITSEQ <= ? " +
+                " order by IBMSNAP_COMMITSEQ, IBMSNAP_INTENTSEQ), " +
+                " tmp2 AS (SELECT " +
+                " CASE " +
+                " WHEN cdc.IBMSNAP_OPERATION = 'U' THEN 5" +
+                " WHEN cdc.IBMSNAP_OPERATION = 'D' AND cdc2.IBMSNAP_OPERATION ='I' THEN 3 " +
+                " WHEN cdc.IBMSNAP_OPERATION = 'I' AND cdc2.IBMSNAP_OPERATION ='D' THEN 4 " +
+                " WHEN cdc.IBMSNAP_OPERATION = 'D' THEN 1 " +
+                " WHEN cdc.IBMSNAP_OPERATION = 'I' THEN 2 " +
+                " END " +
+                " OPCODE, " +
+                " cdc.IBMSNAP_COMMITSEQ, cdc.IBMSNAP_INTENTSEQ, cdc.IBMSNAP_OPERATION " +
+                " FROM tmp cdc left JOIN tmp cdc2 " +
+                " ON  cdc.IBMSNAP_COMMITSEQ = cdc2.IBMSNAP_COMMITSEQ AND " +
+                " ((cdc.IBMSNAP_OPERATION = 'D' AND cdc.rn = cdc2.rn - 1) " +
+                "  OR (cdc.IBMSNAP_OPERATION = 'I' AND cdc.rn = cdc2.rn + 1))) " +
+                " select res.OPCODE, cdc.* from " + connectorConfig.getCdcChangeTablesSchema()
+                + ".# cdc inner join tmp2 res on cdc.IBMSNAP_COMMITSEQ=res.IBMSNAP_COMMITSEQ and cdc.IBMSNAP_INTENTSEQ=res.IBMSNAP_INTENTSEQ "
+                + "order by IBMSNAP_COMMITSEQ, IBMSNAP_INTENTSEQ";
+
+        this.getAllChangesForTableWithUowLimit = "WITH " +
+                " earliest_record AS (" +
+                "        SELECT uow.IBMSNAP_LOGMARKER as earliest_ts" +
+                "        FROM " + connectorConfig.getCdcChangeTablesSchema() + ".IBMSNAP_UOW uow" +
+                "        WHERE uow.IBMSNAP_COMMITSEQ = ?" +
+                "        ORDER BY IBMSNAP_LOGMARKER ASC" +
+                "        LIMIT 1" +
+                "    )," +
+                " tmp AS (SELECT cdc.IBMSNAP_OPERATION, cdc.IBMSNAP_COMMITSEQ, cdc.IBMSNAP_INTENTSEQ, " +
+                " ROW_NUMBER() OVER (PARTITION BY cdc.IBMSNAP_COMMITSEQ ORDER BY cdc.IBMSNAP_INTENTSEQ) rn " +
+                " FROM " +
+                connectorConfig.getCdcChangeTablesSchema() + ".# cdc " +
+                " LEFT JOIN" +
+                connectorConfig.getCdcChangeTablesSchema() + ".IBMSNAP_UOW uow" +
+                " ON cdc.IBMSNAP_COMMITSEQ = uow.IBMSNAP_COMMITSEQ" +
+                " WHERE  cdc.IBMSNAP_COMMITSEQ >= ? AND cdc.IBMSNAP_COMMITSEQ <= ? " +
+                " AND uow.IBMSNAP_LOGMARKER < ADD_SECONDS((select earliest_ts from earliest_record), ?)" +
                 " order by IBMSNAP_COMMITSEQ, IBMSNAP_INTENTSEQ), " +
                 " tmp2 AS (SELECT " +
                 " CASE " +
