@@ -121,12 +121,23 @@ public class Db2Connection extends JdbcConnection {
      * @throws SQLException
      */
     public void getChangesForTable(TableId tableId, Lsn fromLsn, Lsn toLsn, ResultSetConsumer consumer) throws SQLException {
-        final String query = platform.getAllChangesForTableQuery().replace(STATEMENTS_PLACEHOLDER, cdcNameForTable(tableId));
-        prepareQuery(query, statement -> {
-            statement.setBytes(1, fromLsn.getBinary());
-            statement.setBytes(2, toLsn.getBinary());
+        if(!connectorConfig.isStreamingQueryTimespanEnabled()) {
+            final String query = platform.getAllChangesForTableQuery().replace(STATEMENTS_PLACEHOLDER, cdcNameForTable(tableId));
+            prepareQuery(query, statement -> {
+                statement.setBytes(1, fromLsn.getBinary());
+                statement.setBytes(2, toLsn.getBinary());
+            }, consumer);
+        }
+        else{
+            final String query = platform.getAllChangesForTableQueryWithUowLimit().replace(STATEMENTS_PLACEHOLDER, cdcNameForTable(tableId));
+            prepareQuery(query, statement -> {
+                statement.setBytes(1, fromLsn.getBinary());
+                statement.setBytes(2, fromLsn.getBinary());
+                statement.setBytes(3, toLsn.getBinary());
+                statement.setInt(4, connectorConfig.getStreamingQueryTimespanSeconds());
 
-        }, consumer);
+            }, consumer);
+        }
     }
 
     /**

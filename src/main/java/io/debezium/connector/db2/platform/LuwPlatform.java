@@ -18,6 +18,7 @@ public class LuwPlatform implements Db2PlatformAdapter {
     private final String getAllChangesForTable;
     private final String getListOfCdcEnabledTables;
     private final String getListOfNewCdcEnabledTables;
+    private final String getAllChangesForTableQueryWithUowLimit;
 
     public LuwPlatform(Db2ConnectorConfig connectorConfig) {
 
@@ -35,6 +36,33 @@ public class LuwPlatform implements Db2PlatformAdapter {
                 + "cdc.* "
                 + "FROM " + connectorConfig.getCdcChangeTablesSchema() + ".# cdc WHERE   IBMSNAP_COMMITSEQ >= ? AND IBMSNAP_COMMITSEQ <= ? "
                 + "order by IBMSNAP_COMMITSEQ, IBMSNAP_INTENTSEQ";
+
+        this.getAllChangesForTableQueryWithUowLimit = "WITH "
+                + "earliest_record AS ( "
+                + "     SELECT uow.IBMSNAP_LOGMARKER as earliest_ts "
+                + "     FROM " + connectorConfig.getCdcChangeTablesSchema() + ".IBMSNAP_UOW uow "
+                + "     WHERE uow.IBMSNAP_COMMITSEQ = ? "
+                + "     ORDER BY IBMSNAP_LOGMARKER ASC "
+                + "     LIMIT 1 "
+                + "), "
+                + "SELECT "
+                + "     CASE "
+                + "         WHEN IBMSNAP_OPERATION = 'D' AND (LEAD(cdc.IBMSNAP_OPERATION,1,'X') OVER (PARTITION BY cdc.IBMSNAP_COMMITSEQ ORDER BY cdc.IBMSNAP_INTENTSEQ)) ='I' THEN 3 "
+                + "         WHEN IBMSNAP_OPERATION = 'I' AND (LAG(cdc.IBMSNAP_OPERATION,1,'X') OVER (PARTITION BY cdc.IBMSNAP_COMMITSEQ ORDER BY cdc.IBMSNAP_INTENTSEQ)) ='D' THEN 4 "
+                + "         WHEN IBMSNAP_OPERATION = 'D' THEN 1 "
+                + "         WHEN IBMSNAP_OPERATION = 'I' THEN 2 "
+                + "     END "
+                + "     OPCODE, "
+                + "     cdc.* "
+                + "FROM " + connectorConfig.getCdcChangeTablesSchema() + ".# cdc "
+                + "     LEFT JOIN"
+                +           connectorConfig.getCdcChangeTablesSchema() + ".IBMSNAP_UOW uow "
+                + "         ON cdc.IBMSNAP_COMMITSEQ = uow.IBMSNAP_COMMITSEQ "
+                + "WHERE "
+                + "     IBMSNAP_COMMITSEQ >= ? AND IBMSNAP_COMMITSEQ <= ? "
+                + "     AND "
+                + "     uow.IBMSNAP_LOGMARKER <= ADD_SECONDS((select earliest_ts from earliest_record), ?) "
+                + "     order by IBMSNAP_COMMITSEQ, IBMSNAP_INTENTSEQ";
 
         this.getListOfCdcEnabledTables = "select r.SOURCE_OWNER, r.SOURCE_TABLE, r.CD_OWNER, r.CD_TABLE, r.CD_NEW_SYNCHPOINT, r.CD_OLD_SYNCHPOINT, t.TBSPACEID, t.TABLEID , CAST((t.TBSPACEID * 65536 +  t.TABLEID )AS INTEGER )from "
                 + connectorConfig.getCdcControlSchema()
@@ -68,5 +96,10 @@ public class LuwPlatform implements Db2PlatformAdapter {
     @Override
     public String getListOfNewCdcEnabledTablesQuery() {
         return getListOfNewCdcEnabledTables;
+    }
+
+    @Override
+    public String getAllChangesForTableQueryWithUowLimit() {
+        return getAllChangesForTableQueryWithUowLimit;
     }
 }

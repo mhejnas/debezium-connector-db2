@@ -16,6 +16,8 @@ public interface Db2PlatformAdapter {
 
     String getAllChangesForTableQuery();
 
+    String getAllChangesForTableQueryWithUowLimit();
+
     String getListOfCdcEnabledTablesQuery();
 
     String getListOfNewCdcEnabledTablesQuery();

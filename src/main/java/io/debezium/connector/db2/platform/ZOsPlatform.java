@@ -64,7 +64,7 @@ public class ZOsPlatform implements Db2PlatformAdapter {
                 connectorConfig.getCdcChangeTablesSchema() + ".IBMSNAP_UOW uow" +
                 " ON cdc.IBMSNAP_COMMITSEQ = uow.IBMSNAP_COMMITSEQ" +
                 " WHERE  cdc.IBMSNAP_COMMITSEQ >= ? AND cdc.IBMSNAP_COMMITSEQ <= ? " +
-                " AND uow.IBMSNAP_LOGMARKER < ADD_SECONDS((select earliest_ts from earliest_record), ?)" +
+                " AND uow.IBMSNAP_LOGMARKER <= ADD_SECONDS((select earliest_ts from earliest_record), ?)" +
                 " order by IBMSNAP_COMMITSEQ, IBMSNAP_INTENTSEQ), " +
                 " tmp2 AS (SELECT " +
                 " CASE " +
@@ -105,6 +105,11 @@ public class ZOsPlatform implements Db2PlatformAdapter {
     @Override
     public String getAllChangesForTableQuery() {
         return getAllChangesForTable;
+    }
+
+    @Override
+    public String getAllChangesForTableQueryWithUowLimit() {
+        return getAllChangesForTableWithUowLimit;
     }
 
     @Override
