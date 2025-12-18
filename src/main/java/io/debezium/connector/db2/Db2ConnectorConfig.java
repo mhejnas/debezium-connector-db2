@@ -488,7 +488,7 @@ public class Db2ConnectorConfig extends HistorizedRelationalDatabaseConnectorCon
     public static final Field STREAMING_QUERY_TIMESPAN_SECONDS = Field.create("streaming.query.timespan.seconds")
             .withDescription(
                     "The maximum number of seconds for a streaming query to include that query's result set, starting from the earliest row in this query.  " +
-                            "Used to limit the size of queries when the change table is large to avoid excessive resource usage.")
+                            "Used to limit the size of queries when the change table is large to avoid excessive resource usage.  If 0 or negative, no timespan limit will apply.")
             .withType(Type.INT)
             .withImportance(Importance.LOW)
             .withWidth(Width.SHORT)

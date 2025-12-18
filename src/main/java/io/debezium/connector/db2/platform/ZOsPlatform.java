@@ -6,6 +6,7 @@
 package io.debezium.connector.db2.platform;
 
 import io.debezium.connector.db2.Db2ConnectorConfig;
+import jdk.jshell.spi.ExecutionControl;
 
 /**
  * Implementation details for z/OS
@@ -60,7 +61,7 @@ public class ZOsPlatform implements Db2PlatformAdapter {
                 " ROW_NUMBER() OVER (PARTITION BY cdc.IBMSNAP_COMMITSEQ ORDER BY cdc.IBMSNAP_INTENTSEQ) rn " +
                 " FROM " +
                 connectorConfig.getCdcChangeTablesSchema() + ".# cdc " +
-                " LEFT JOIN" +
+                " INNER JOIN" +
                 connectorConfig.getCdcChangeTablesSchema() + ".IBMSNAP_UOW uow" +
                 " ON cdc.IBMSNAP_COMMITSEQ = uow.IBMSNAP_COMMITSEQ" +
                 " WHERE  cdc.IBMSNAP_COMMITSEQ >= ? AND cdc.IBMSNAP_COMMITSEQ <= ? " +
@@ -120,5 +121,14 @@ public class ZOsPlatform implements Db2PlatformAdapter {
     @Override
     public String getListOfNewCdcEnabledTablesQuery() {
         return getListOfNewCdcEnabledTables;
+    }
+
+    @Override
+    public String getNextLsnAfterForTableQuery(String tableName) {
+        throw new RuntimeException("getNextLsnAfterForTableQuery is not supported on z/OS");
+    }
+    @Override
+    public String getTimestampForLsnQuery() {
+        throw new RuntimeException("getTimestampForLsnQuery is not supported on z/OS");
     }
 }

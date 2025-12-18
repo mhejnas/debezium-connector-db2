@@ -138,12 +138,36 @@ public class Db2StreamingChangeEventSource implements StreamingChangeEventSource
                     metronome.pause();
                     continue;
                 }
-                // There is no change in the database
-                if (currentMaxLsn.equals(lastProcessedPosition.getCommitLsn()) && shouldIncreaseFromLsn) {
-                    LOGGER.debug("No change in the database");
-                    handlePause(context);
-                    metronome.pause();
-                    continue;
+
+                if(!connectorConfig.isStreamingQueryTimespanEnabled()) {
+                    // There is no change in the database
+                    if (currentMaxLsn.equals(lastProcessedPosition.getCommitLsn()) && shouldIncreaseFromLsn) {
+                        LOGGER.debug("No change in the database");
+                        handlePause(context);
+                        metronome.pause();
+                        continue;
+                    }
+                }
+                else{
+                    LOGGER.debug("It is possible that there is a change in the database, but we haven't read it out yet.  " +
+                                "Checking the tables for new entries that we haven't produced");
+                    final Lsn nextLowestLsnRelevantToTables = getEarliestLogPositionForRelevantTables(
+                            lastProcessedPosition.getCommitLsn(),
+                            currentMaxLsn,
+                            Arrays.asList(tablesSlot.get())
+                    );
+                    // If there is no newer change to the database that was found, there is nothing to do.
+                    if(nextLowestLsnRelevantToTables == Lsn.NULL) {
+                        LOGGER.debug("No change in the database for the relevant tables");
+                        lastProcessedPosition = TxLogPosition.valueOf(currentMaxLsn);
+                        handlePause(context);
+                        metronome.pause();
+                        continue;
+                    }
+                    else{
+                        lastProcessedPosition = TxLogPosition.valueOf(nextLowestLsnRelevantToTables);
+                        shouldIncreaseFromLsn = false;
+                    }
                 }
 
                 // Reading interval is inclusive so we need to move LSN forward but not for first
@@ -166,7 +190,12 @@ public class Db2StreamingChangeEventSource implements StreamingChangeEventSource
                         }
                     }
                 }
-                try {
+                AtomicReference<TxLogPosition> highestStopLSNOfThisIteration = new AtomicReference<>(TxLogPosition.valueOf(fromLsn));
+                try{
+                    try {
+                        Thread.sleep(10000);
+                    }
+                    catch (InterruptedException e) {throw new RuntimeException(e);}
                     dataConnection.getChangesForTables(tablesSlot.get(), fromLsn, currentMaxLsn, resultSets -> {
 
                         long eventSerialNoInInitialTx = 1;
@@ -214,6 +243,12 @@ public class Db2StreamingChangeEventSource implements StreamingChangeEventSource
                                 eventSerialNoInInitialTx++;
                                 tableWithSmallestLsn.next();
                                 continue;
+                            }
+                            if(connectorConfig.isStreamingQueryTimespanEnabled()){
+                                if(tableWithSmallestLsn.getChangePosition().compareTo(highestStopLSNOfThisIteration.get()) < 0){
+                                    LOGGER.info("Processing a change {} that is later than the last recorded latest position {}", tableWithSmallestLsn.getChangePosition(), highestStopLSNOfThisIteration);
+                                    highestStopLSNOfThisIteration.set(tableWithSmallestLsn.getChangePosition());
+                                }
                             }
                             if (connectorConfig.isZStopLsnIgnore()) {
                                 LOGGER.trace("{} setting true. Setting the stop LSN as null instead of {}",
@@ -285,7 +320,17 @@ public class Db2StreamingChangeEventSource implements StreamingChangeEventSource
                             tableWithSmallestLsn.next();
                         }
                     });
-                    lastProcessedPosition = TxLogPosition.valueOf(currentMaxLsn);
+                    if(!connectorConfig.isStreamingQueryTimespanEnabled()) {
+                        lastProcessedPosition = TxLogPosition.valueOf(currentMaxLsn);
+                    }
+                    else{
+                        if(highestStopLSNOfThisIteration.get().compareTo(lastProcessedPosition) > 0){
+                            LOGGER.info("Did not reach the highest LSN in the database, most likely because the " +
+                                    "timespan for the query limited how much could be read. The last processed " +
+                                    "position is now set to {}", highestStopLSNOfThisIteration);
+                        }
+                        lastProcessedPosition = highestStopLSNOfThisIteration.get();
+                    }
                     // Terminate the transaction otherwise CDC could not be disabled for tables
                     dataConnection.rollback();
                 }
@@ -299,6 +344,19 @@ public class Db2StreamingChangeEventSource implements StreamingChangeEventSource
         catch (Exception e) {
             errorHandler.setProducerThrowable(e);
         }
+    }
+    private Lsn getEarliestLogPositionForRelevantTables(final Lsn searchStartingPoint, final Lsn maxLsnForCycle, List<Db2ChangeTable> changeTableList) throws SQLException{
+        Lsn earliestLogPosition = Lsn.NULL;
+        for(Db2ChangeTable table : changeTableList){
+            final Lsn nextLsnForTable = dataConnection.getNextChangeLsnForTable(table.getChangeTableId(), searchStartingPoint, maxLsnForCycle);
+            if(earliestLogPosition == Lsn.NULL){
+                earliestLogPosition = nextLsnForTable;
+            }
+            else if(earliestLogPosition.compareTo(nextLsnForTable) < 0){ // If the newly found position is before the prior lowest position, that is the new lowest position
+                earliestLogPosition = nextLsnForTable;
+            }
+        }
+        return earliestLogPosition;
     }
 
     private void handlePause(final ChangeEventSourceContext context) throws Exception {

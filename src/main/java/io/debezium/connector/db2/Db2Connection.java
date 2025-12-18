@@ -21,6 +21,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import io.debezium.util.HexConverter;
 import org.apache.kafka.connect.errors.ConnectException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -156,18 +157,32 @@ public class Db2Connection extends JdbcConnection {
 
         int idx = 0;
         for (Db2ChangeTable changeTable : changeTables) {
-            final String query = platform.getAllChangesForTableQuery().replace(STATEMENTS_PLACEHOLDER, changeTable.getCaptureInstance());
-            queries[idx] = query;
-            // If the table was added in the middle of queried buffer we need
-            // to adjust from to the first LSN available
-            LOGGER.trace("Getting changes for table {} in range[{}, {}]", changeTable, intervalFromLsn, intervalToLsn);
-            preparers[idx] = statement -> {
-                statement.setBytes(1, intervalFromLsn.getBinary());
-                statement.setBytes(2, intervalToLsn.getBinary());
-
-            };
-
-            idx++;
+            if(!connectorConfig.isStreamingQueryTimespanEnabled()) {
+                final String query = platform.getAllChangesForTableQuery().replace(STATEMENTS_PLACEHOLDER, changeTable.getCaptureInstance());
+                queries[idx] = query;
+                // If the table was added in the middle of queried buffer we need
+                // to adjust from to the first LSN available
+                LOGGER.trace("Getting changes for table {} in range[{}, {}]", changeTable, intervalFromLsn, intervalToLsn);
+                preparers[idx] = statement -> {
+                    statement.setBytes(1, intervalFromLsn.getBinary());
+                    statement.setBytes(2, intervalToLsn.getBinary());
+                };
+                idx++;
+            }
+            else{
+                final String query = platform.getAllChangesForTableQueryWithUowLimit().replace(STATEMENTS_PLACEHOLDER, changeTable.getCaptureInstance());
+                queries[idx] = query;
+                // If the table was added in the middle of queried buffer we need
+                // to adjust from to the first LSN available
+                LOGGER.trace("Getting changes for table {} in range[{}, {}] with a UoW range limit of {} seconds.", changeTable, intervalFromLsn, intervalToLsn, connectorConfig.getStreamingQueryTimespanSeconds());
+                preparers[idx] = statement -> {
+                    statement.setBytes(1, intervalFromLsn.getBinary());
+                    statement.setBytes(2, intervalFromLsn.getBinary());
+                    statement.setBytes(3, intervalToLsn.getBinary());
+                    statement.setInt(4, connectorConfig.getStreamingQueryTimespanSeconds());
+                };
+                idx++;
+            }
         }
         prepareQuery(queries, preparers, consumer);
     }
@@ -576,6 +591,39 @@ public class Db2Connection extends JdbcConnection {
 
     public <T> T singleOptionalValue(String query, ResultSetExtractor<T> extractor) throws SQLException {
         return queryAndMap(query, rs -> rs.next() ? extractor.apply(rs) : null);
+    }
+
+    /**
+     * Gets the next LSN for a given table after a starting point LSN
+     *
+     * @param tableId  - the requested table changes
+     * @param fromLsn  - closed lower bound of interval of changes to be provided
+
+     * @throws SQLException
+     */
+    public Lsn getNextChangeLsnForTable(TableId tableId, Lsn fromLsn, Lsn maxLsn) throws SQLException {
+        final String query = platform.getNextLsnAfterForTableQuery(tableId.table());
+        final StatementPreparer preparer = statement -> {
+            statement.setBytes(1, fromLsn.getBinary());
+            statement.setBytes(2, maxLsn.getBinary());
+        };
+        final ResultSetMapper<Lsn> resultSetMapper = rs -> {
+            if(rs.next()){
+                Timestamp ts = rs.getTimestamp(1);
+                byte[] bytes = HexConverter.convertFromHex(rs.getString(2));
+                LOGGER.info("Next change found for table {} was at {} with LSN {}", tableId.table(), ts, bytes.toString());
+                return Lsn.valueOf(bytes);
+            }
+            else {
+                return Lsn.NULL;
+            }
+        };
+        Lsn lsnOfNextChangeToTable = prepareQueryAndMap(
+                query,
+                preparer,
+                resultSetMapper
+        );
+        return lsnOfNextChangeToTable;
     }
 
     private PreparedStatement createPreparedStatement(String query) {
