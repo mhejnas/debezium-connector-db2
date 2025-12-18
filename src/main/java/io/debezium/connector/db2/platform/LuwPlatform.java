@@ -18,6 +18,9 @@ public class LuwPlatform implements Db2PlatformAdapter {
     private final String getAllChangesForTable;
     private final String getListOfCdcEnabledTables;
     private final String getListOfNewCdcEnabledTables;
+    private final String getNextLsnAfterForTableQuery;
+    private static final String STATEMENTS_PLACEHOLDER = "#";
+    private final String getTimestampForLsn;
 
     public LuwPlatform(Db2ConnectorConfig connectorConfig) {
 
@@ -48,6 +51,23 @@ public class LuwPlatform implements Db2PlatformAdapter {
                 "from " + connectorConfig.getCdcControlSchema()
                 + ".IBMSNAP_REGISTER  r left JOIN SYSCAT.TABLES t ON r.SOURCE_OWNER  = t.TABSCHEMA AND r.SOURCE_TABLE = t.TABNAME " +
                 "WHERE r.SOURCE_OWNER <> '' AND CD_NEW_SYNCHPOINT > ? AND (CD_OLD_SYNCHPOINT < ? OR CD_OLD_SYNCHPOINT IS NULL)";
+
+        this.getNextLsnAfterForTableQuery = "" +
+                "SELECT " +
+                "uow.IBMSNAP_LOGMARKER AS closest_after_ts, " +
+                "HEX(uow.IBMSNAP_COMMITSEQ) AS commit_seq_closest " +
+                "FROM " +
+                connectorConfig.getCdcControlSchema() + ".IBMSNAP_UOW uow " +
+                "LEFT JOIN " +
+                connectorConfig.getCdcControlSchema() + ".# cdc " +
+                "ON cdc.IBMSNAP_COMMITSEQ = uow.IBMSNAP_COMMITSEQ " +
+                "WHERE " +
+                "uow.IBMSNAP_COMMITSEQ > ? " +
+                "AND " +
+                "uow.IBMSNAP_COMMITSEQ <= ? " +
+                "ORDER BY " +
+                "IBMSNAP_LOGMARKER ASC " +
+                "LIMIT 1;";
     }
 
     @Override
@@ -68,5 +88,13 @@ public class LuwPlatform implements Db2PlatformAdapter {
     @Override
     public String getListOfNewCdcEnabledTablesQuery() {
         return getListOfNewCdcEnabledTables;
+    }
+
+    @Override
+    public String getTimestampForLsnQuery() { return getTimestampForLsn; }
+
+    @Override
+    public String getNextLsnAfterForTableQuery(final String tableName){
+        return this.getNextLsnAfterForTableQuery.replace(STATEMENTS_PLACEHOLDER, tableName);
     }
 }

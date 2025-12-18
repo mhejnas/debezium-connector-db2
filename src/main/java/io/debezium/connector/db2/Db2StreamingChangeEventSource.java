@@ -300,6 +300,19 @@ public class Db2StreamingChangeEventSource implements StreamingChangeEventSource
             errorHandler.setProducerThrowable(e);
         }
     }
+    private Lsn getEarliestLogPositionForRelevantTables(final Lsn searchStartingPoint, final Lsn maxLsnForCycle, List<Db2ChangeTable> changeTableList) throws SQLException{
+        Lsn earliestLogPosition = Lsn.NULL;
+        for(Db2ChangeTable table : changeTableList){
+            final Lsn nextLsnForTable = dataConnection.getNextChangeLsnForTable(table.getChangeTableId(), searchStartingPoint, maxLsnForCycle);
+            if(earliestLogPosition == Lsn.NULL){
+                earliestLogPosition = nextLsnForTable;
+            }
+            else if(earliestLogPosition.compareTo(nextLsnForTable) < 0){ // If the newly found position is before the prior lowest position, that is the new lowest position
+                earliestLogPosition = nextLsnForTable;
+            }
+        }
+        return earliestLogPosition;
+    }
 
     private void handlePause(final ChangeEventSourceContext context) throws Exception {
         if (context.isPaused()) {

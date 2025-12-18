@@ -16,8 +16,11 @@ public interface Db2PlatformAdapter {
 
     String getAllChangesForTableQuery();
 
+    String getTimestampForLsnQuery();
+
     String getListOfCdcEnabledTablesQuery();
 
     String getListOfNewCdcEnabledTablesQuery();
 
+    String getNextLsnAfterForTableQuery(String tableName);
 }

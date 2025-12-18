@@ -79,4 +79,13 @@ public class ZOsPlatform implements Db2PlatformAdapter {
     public String getListOfNewCdcEnabledTablesQuery() {
         return getListOfNewCdcEnabledTables;
     }
+
+    @Override
+    public String getNextLsnAfterForTableQuery(String tableName) {
+        throw new RuntimeException("getNextLsnAfterForTableQuery is not supported on z/OS");
+    }
+    @Override
+    public String getTimestampForLsnQuery() {
+        throw new RuntimeException("getTimestampForLsnQuery is not supported on z/OS");
+    }
 }
