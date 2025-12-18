@@ -85,7 +85,7 @@ public class ZOsPlatform implements Db2PlatformAdapter {
         throw new RuntimeException("getNextLsnAfterForTableQuery is not supported on z/OS");
     }
     @Override
-    public String getTimestampForLsnQuery() {
-        throw new RuntimeException("getTimestampForLsnQuery is not supported on z/OS");
+    public String getEndLsnForSecondsFromLsnQuery() {
+        throw new RuntimeException("getEndLsnForSecondsFromLsnQuery is not supported on z/OS");
     }
 }

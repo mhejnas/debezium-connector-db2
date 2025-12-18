@@ -20,7 +20,7 @@ public class LuwPlatform implements Db2PlatformAdapter {
     private final String getListOfNewCdcEnabledTables;
     private final String getNextLsnAfterForTableQuery;
     private static final String STATEMENTS_PLACEHOLDER = "#";
-    private final String getTimestampForLsn;
+    private final String getEndLsnForSecondsFromLsn;
 
     public LuwPlatform(Db2ConnectorConfig connectorConfig) {
 
@@ -68,6 +68,25 @@ public class LuwPlatform implements Db2PlatformAdapter {
                 "ORDER BY " +
                 "IBMSNAP_LOGMARKER ASC " +
                 "LIMIT 1;";
+        
+        this.getEndLsnForSecondsFromLsn = ""
+        + "SELECT " +
+                "       uow.IBMSNAP_LOGMARKER AS COMMITSEQ_TIME, " +
+                "       uow.IBMSNAP_COMMITSEQ AS COMMITSEQ " +
+                "FROM " +
+                "       ASNCDC.IBMSNAP_UOW uow " +
+                "WHERE " +
+                "       uow.IBMSNAP_COMMITSEQ >= ? " +
+                "       AND uow.IBMSNAP_LOGMARKER <= ADD_SECONDS( " +
+                "              ( " +
+                "                     SELECT uow.IBMSNAP_LOGMARKER  " +
+                "                     FROM ASNCDC.IBMSNAP_UOW uow " +
+                "                     WHERE uow.IBMSNAP_COMMITSEQ = ? " +
+                "                     LIMIT 1), " +
+                "       ?) " +
+                "ORDER BY " +
+                "       uow.IBMSNAP_COMMITSEQ DESC " +
+                "LIMIT 1; ";
     }
 
     @Override
@@ -91,7 +110,7 @@ public class LuwPlatform implements Db2PlatformAdapter {
     }
 
     @Override
-    public String getTimestampForLsnQuery() { return getTimestampForLsn; }
+    public String getEndLsnForSecondsFromLsnQuery() { return getEndLsnForSecondsFromLsn; }
 
     @Override
     public String getNextLsnAfterForTableQuery(final String tableName){
