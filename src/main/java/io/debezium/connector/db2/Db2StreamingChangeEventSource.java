@@ -130,7 +130,13 @@ public class Db2StreamingChangeEventSource implements StreamingChangeEventSource
             // otherwise we might skip an incomplete transaction after restart
             boolean shouldIncreaseFromLsn = offsetContext.isSnapshotCompleted();
             while (context.isRunning()) {
-                final Lsn currentMaxLsn = dataConnection.getMaxLsn();
+                Lsn currentMaxLsn = null;
+                if (!connectorConfig.isStreamingQueryTimespanEnabled()) {
+                    currentMaxLsn = dataConnection.getMaxLsn();
+                }
+                else {
+                    currentMaxLsn = dataConnection.getMaxLsnForTimespan(lastProcessedPosition.getCommitLsn());
+                }
 
                 // Shouldn't happen if the agent is running, but it is better to guard against such situation
                 if (!currentMaxLsn.isAvailable()) {
@@ -299,19 +305,6 @@ public class Db2StreamingChangeEventSource implements StreamingChangeEventSource
         catch (Exception e) {
             errorHandler.setProducerThrowable(e);
         }
-    }
-    private Lsn getEarliestLogPositionForRelevantTables(final Lsn searchStartingPoint, final Lsn maxLsnForCycle, List<Db2ChangeTable> changeTableList) throws SQLException{
-        Lsn earliestLogPosition = Lsn.NULL;
-        for(Db2ChangeTable table : changeTableList){
-            final Lsn nextLsnForTable = dataConnection.getNextChangeLsnForTable(table.getChangeTableId(), searchStartingPoint, maxLsnForCycle);
-            if(earliestLogPosition == Lsn.NULL){
-                earliestLogPosition = nextLsnForTable;
-            }
-            else if(earliestLogPosition.compareTo(nextLsnForTable) < 0){ // If the newly found position is before the prior lowest position, that is the new lowest position
-                earliestLogPosition = nextLsnForTable;
-            }
-        }
-        return earliestLogPosition;
     }
 
     private void handlePause(final ChangeEventSourceContext context) throws Exception {

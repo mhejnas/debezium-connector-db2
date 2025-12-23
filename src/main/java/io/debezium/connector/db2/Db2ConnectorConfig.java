@@ -17,6 +17,7 @@ import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.ConfigDef.Importance;
 import org.apache.kafka.common.config.ConfigDef.Type;
 import org.apache.kafka.common.config.ConfigDef.Width;
+import org.apache.kafka.common.config.ConfigException;
 
 import io.debezium.config.CommonConnectorConfig;
 import io.debezium.config.ConfigDefinition;
@@ -49,7 +50,7 @@ public class Db2ConnectorConfig extends HistorizedRelationalDatabaseConnectorCon
 
     public static final int DEFAULT_QUERY_FETCH_SIZE = 10_000;
 
-    public static final int DEFAULT_STREAMING_QUERY_TIMESPAN_SECONDS = -1;  // No limit
+    public static final int DEFAULT_STREAMING_QUERY_TIMESPAN_SECONDS = -1; // No limit
 
     protected static final int DEFAULT_PORT = 50000;
 
@@ -571,8 +572,12 @@ public class Db2ConnectorConfig extends HistorizedRelationalDatabaseConnectorCon
         this.cdcControlSchema = config.getString(CDC_CONTROL_SCHEMA);
 
         this.streamingQueryTimespanSeconds = config.getInteger(STREAMING_QUERY_TIMESPAN_SECONDS);
-        if(this.streamingQueryTimespanSeconds <= 0) {
+        if (this.streamingQueryTimespanSeconds <= 0) {
             this.streamingQueryTimespanEnabled = false;
+        }
+        else if (this.streamingQueryTimespanSeconds == 1) {
+            throw new ConfigException("The {} setting of 1 can cause an infinite loop.  " +
+                    "Please set it to a higher setting or negative to disable.", STREAMING_QUERY_TIMESPAN_SECONDS.name());
         }
         else {
             this.streamingQueryTimespanEnabled = true;
@@ -611,9 +616,13 @@ public class Db2ConnectorConfig extends HistorizedRelationalDatabaseConnectorCon
         return cdcControlSchema;
     }
 
-    public int getStreamingQueryTimespanSeconds() { return streamingQueryTimespanSeconds; }
+    public int getStreamingQueryTimespanSeconds() {
+        return streamingQueryTimespanSeconds;
+    }
 
-    public boolean isStreamingQueryTimespanEnabled() { return streamingQueryTimespanEnabled; }
+    public boolean isStreamingQueryTimespanEnabled() {
+        return streamingQueryTimespanEnabled;
+    }
 
     @Override
     protected SourceInfoStructMaker<? extends AbstractSourceInfo> getSourceInfoStructMaker(Version version) {

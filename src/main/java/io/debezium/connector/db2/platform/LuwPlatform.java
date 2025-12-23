@@ -18,7 +18,6 @@ public class LuwPlatform implements Db2PlatformAdapter {
     private final String getAllChangesForTable;
     private final String getListOfCdcEnabledTables;
     private final String getListOfNewCdcEnabledTables;
-    private final String getNextLsnAfterForTableQuery;
     private static final String STATEMENTS_PLACEHOLDER = "#";
     private final String getEndLsnForSecondsFromLsn;
 
@@ -52,41 +51,30 @@ public class LuwPlatform implements Db2PlatformAdapter {
                 + ".IBMSNAP_REGISTER  r left JOIN SYSCAT.TABLES t ON r.SOURCE_OWNER  = t.TABSCHEMA AND r.SOURCE_TABLE = t.TABNAME " +
                 "WHERE r.SOURCE_OWNER <> '' AND CD_NEW_SYNCHPOINT > ? AND (CD_OLD_SYNCHPOINT < ? OR CD_OLD_SYNCHPOINT IS NULL)";
 
-        this.getNextLsnAfterForTableQuery = "" +
+        this.getEndLsnForSecondsFromLsn = "" +
                 "SELECT " +
-                "uow.IBMSNAP_LOGMARKER AS closest_after_ts, " +
-                "HEX(uow.IBMSNAP_COMMITSEQ) AS commit_seq_closest " +
-                "FROM " +
-                connectorConfig.getCdcControlSchema() + ".IBMSNAP_UOW uow " +
-                "LEFT JOIN " +
-                connectorConfig.getCdcControlSchema() + ".# cdc " +
-                "ON cdc.IBMSNAP_COMMITSEQ = uow.IBMSNAP_COMMITSEQ " +
-                "WHERE " +
-                "uow.IBMSNAP_COMMITSEQ > ? " +
-                "AND " +
-                "uow.IBMSNAP_COMMITSEQ <= ? " +
-                "ORDER BY " +
-                "IBMSNAP_LOGMARKER ASC " +
-                "LIMIT 1;";
-        
-        this.getEndLsnForSecondsFromLsn = ""
-        + "SELECT " +
                 "       uow.IBMSNAP_LOGMARKER AS COMMITSEQ_TIME, " +
                 "       uow.IBMSNAP_COMMITSEQ AS COMMITSEQ " +
                 "FROM " +
-                "       ASNCDC.IBMSNAP_UOW uow " +
+                connectorConfig.getCdcControlSchema() + ".IBMSNAP_UOW uow " +
                 "WHERE " +
-                "       uow.IBMSNAP_COMMITSEQ >= ? " +
-                "       AND uow.IBMSNAP_LOGMARKER <= ADD_SECONDS( " +
+                "       uow.IBMSNAP_COMMITSEQ > ? " +
+                "       AND uow.IBMSNAP_LOGMARKER <= " +
                 "              ( " +
-                "                     SELECT uow.IBMSNAP_LOGMARKER  " +
-                "                     FROM ASNCDC.IBMSNAP_UOW uow " +
-                "                     WHERE uow.IBMSNAP_COMMITSEQ = ? " +
-                "                     LIMIT 1), " +
-                "       ?) " +
+                "                     COALESCE(" +
+                "                       (SELECT uow.IBMSNAP_LOGMARKER + ? SECONDS " +
+                "                       FROM " + connectorConfig.getCdcControlSchema() + ".IBMSNAP_UOW uow " +
+                "                       WHERE uow.IBMSNAP_COMMITSEQ = ? " +
+                "                       LIMIT 1), " +
+                "                       (SELECT MIN(uow.IBMSNAP_LOGMARKER) " +
+                "                       FROM " + connectorConfig.getCdcControlSchema() + ".IBMSNAP_UOW uow " +
+                "                       WHERE uow.IBMSNAP_COMMITSEQ > ? )" +
+                "                     ) " +
+                "               ) " +
                 "ORDER BY " +
                 "       uow.IBMSNAP_COMMITSEQ DESC " +
-                "LIMIT 1; ";
+                "LIMIT 1";
+
     }
 
     @Override
@@ -110,10 +98,7 @@ public class LuwPlatform implements Db2PlatformAdapter {
     }
 
     @Override
-    public String getEndLsnForSecondsFromLsnQuery() { return getEndLsnForSecondsFromLsn; }
-
-    @Override
-    public String getNextLsnAfterForTableQuery(final String tableName){
-        return this.getNextLsnAfterForTableQuery.replace(STATEMENTS_PLACEHOLDER, tableName);
+    public String getEndLsnForSecondsFromLsnQuery() {
+        return getEndLsnForSecondsFromLsn;
     }
 }

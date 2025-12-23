@@ -21,7 +21,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import io.debezium.util.HexConverter;
 import org.apache.kafka.connect.errors.ConnectException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -112,15 +111,63 @@ public class Db2Connection extends JdbcConnection {
         }, "Maximum LSN query must return exactly one value"));
     }
 
+    public Lsn getMaxLsnForTimespan(final Lsn startLsn) throws SQLException {
+        final Lsn maxLsn = getMaxLsn();
+        if (maxLsn.compareTo(startLsn) <= 0) {
+            return maxLsn;
+        }
+        Lsn intervalEndLsn = null;
+        int timespanMultiplier = 1;
+        while (true) {
+            intervalEndLsn = getMaxLsnForTimespan(startLsn, timespanMultiplier);
+            if (intervalEndLsn != Lsn.NULL) {
+                if (maxLsn.compareTo(intervalEndLsn) >= 0) { // If we've gone past the maxLsn, just return that
+                    return maxLsn;
+                }
+                else {
+                    return intervalEndLsn;
+                }
+            }
+            timespanMultiplier++;
+        }
+    }
+
     /**
-     * Provides all changes recorded by the DB2 CDC capture process for a given table.
-     *
-     * @param tableId  - the requested table changes
-     * @param fromLsn  - closed lower bound of interval of changes to be provided
-     * @param toLsn    - closed upper bound of interval  of changes to be provided
-     * @param consumer - the change processor
-     * @throws SQLException
+     * @return the current largest log sequence number
      */
+    private Lsn getMaxLsnForTimespan(final Lsn startLsn, int timespanMultiplier) throws SQLException {
+        Lsn endLsnForStreaming = prepareQueryAndMap(
+                platform.getEndLsnForSecondsFromLsnQuery(),
+                statement -> {
+                    statement.setBytes(1, startLsn.getBinary());
+                    statement.setInt(2, (connectorConfig.getStreamingQueryTimespanSeconds() * timespanMultiplier));
+                    statement.setBytes(3, startLsn.getBinary());
+                    statement.setBytes(4, startLsn.getBinary());
+
+                },
+                rs -> {
+                    if (rs.next() == false) {
+                        return Lsn.NULL;
+                    }
+                    else {
+                        Timestamp ts = rs.getTimestamp(1);
+                        byte[] bytesLsn = rs.getBytes(2);
+                        LOGGER.info("End LSN representing timestamp {} for streaming is {}", ts, bytesLsn);
+                        return Lsn.valueOf(bytesLsn);
+                    }
+                });
+        return endLsnForStreaming;
+    }
+
+    /**
+    * Provides all changes recorded by the DB2 CDC capture process for a given table.
+    *
+    * @param tableId  - the requested table changes
+    * @param fromLsn  - closed lower bound of interval of changes to be provided
+    * @param toLsn    - closed upper bound of interval  of changes to be provided
+    * @param consumer - the change processor
+    * @throws SQLException
+    */
     public void getChangesForTable(TableId tableId, Lsn fromLsn, Lsn toLsn, ResultSetConsumer consumer) throws SQLException {
         final String query = platform.getAllChangesForTableQuery().replace(STATEMENTS_PLACEHOLDER, cdcNameForTable(tableId));
         prepareQuery(query, statement -> {
@@ -566,39 +613,6 @@ public class Db2Connection extends JdbcConnection {
 
     public <T> T singleOptionalValue(String query, ResultSetExtractor<T> extractor) throws SQLException {
         return queryAndMap(query, rs -> rs.next() ? extractor.apply(rs) : null);
-    }
-
-    /**
-     * Gets the next LSN for a given table after a starting point LSN
-     *
-     * @param tableId  - the requested table changes
-     * @param fromLsn  - closed lower bound of interval of changes to be provided
-
-     * @throws SQLException
-     */
-    public Lsn getNextChangeLsnForTable(TableId tableId, Lsn fromLsn, Lsn maxLsn) throws SQLException {
-        final String query = platform.getNextLsnAfterForTableQuery(tableId.table());
-        final StatementPreparer preparer = statement -> {
-            statement.setBytes(1, fromLsn.getBinary());
-            statement.setBytes(2, maxLsn.getBinary());
-        };
-        final ResultSetMapper<Lsn> resultSetMapper = rs -> {
-            if(rs.next()){
-                Timestamp ts = rs.getTimestamp(1);
-                byte[] bytes = HexConverter.convertFromHex(rs.getString(2));
-                LOGGER.info("Next change found for table {} was at {} with LSN {}", tableId.table(), ts, bytes.toString());
-                return Lsn.valueOf(bytes);
-            }
-            else {
-                return Lsn.NULL;
-            }
-        };
-        Lsn lsnOfNextChangeToTable = prepareQueryAndMap(
-                query,
-                preparer,
-                resultSetMapper
-        );
-        return lsnOfNextChangeToTable;
     }
 
     private PreparedStatement createPreparedStatement(String query) {
